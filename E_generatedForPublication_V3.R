@@ -1,0 +1,341 @@
+
+### Definitive script
+#dev.off()
+### Imports
+library("usethis")
+library("roxygen2")
+library("devtools")
+library(Rcpp)
+library(RcppEigen)
+library(methods)
+library(lattice)
+library(ggplot2)
+library(dplyr)
+library(purrr)
+library(Matrix)
+library("viridis")
+library("optAM")
+library(hrbrthemes)
+library(grid)
+library(raster)
+
+### Global Details
+col = c('green3','green2','blue1','blue3')
+col = terrain.colors(20)
+hea = (viridis(10))
+
+#################################################
+## Initialisation & Variables
+#################################################
+
+# Map - size
+nrow = 20
+ncol = 20
+
+# Map - time caracteristics
+N_cycles = 3
+Tadd_cyc = 1
+
+# Map - space caracteristics
+Tmin_alt_0 = 10
+Tmax_alt_0 = 15
+Tadd_alt_1 = -8
+Trange = Tmax_alt_0 - (Tmin_alt_0 + Tadd_alt_1)
+Tmarge = c(Tmin_alt_0 + Tadd_alt_1, Tmax_alt_0+Tadd_cyc)
+
+# Algorithm - genetic algo caracteristics
+npop = 2000
+nsur = 400
+ngen = 10
+
+# Algorithm - optimum condition values
+threshold = 30
+confidence = 0.95
+
+# Species - caracteristics
+Trange_spe = c(7.5,8,10,10.5)
+migr_spe = array(0.2, c(3, 3))
+migr_spe[2,2] = 0.9
+
+#################################################
+## Maps construction
+#################################################
+
+# Our cool map looking like Jupiter
+mapping = function(x,y){
+  return (exp(-3*abs(x-y))* (sqrt((x-0.5)^2+(y-0.5)^2)<0.45))
+}
+height_map = function(nrow,ncol,FUN){
+  x = seq(0,1,length=nrow)
+  y = seq(0,1,length=ncol)
+  v = outer(x,y,FUN)
+  v = (v-min(v))/(max(v)-min(v))
+  v = v*(v>0.1)
+  v = (v-min(v))/(max(v)-min(v))
+  v[v==0] = NA
+  v[x]
+  return(v)
+}
+col = terrain.colors(10)
+map = height_map(nrow,ncol,mapping)
+image.nan.better(map,col=col,zlim=range(map,na.rm=T),outside.below.color='brown',outside.above.color='brown',na.color='navy')
+box()
+
+# Temperatures on the map
+nr = seq(0,1,length=nrow)
+nc = seq(0,1,length=ncol)
+temperatures = function(x,y){
+  return(-(Tmax_alt_0-Tmin_alt_0)*y+Tmax_alt_0)
+}
+climat_map_maker = function(height_map,Tgain,t){
+  return(outer(nr,nc,FUN="temperatures")*(height_map!=0)+height_map*Tadd_alt_1+Tgain*t) 
+}
+ccmm1 = function(height_map,Tgain,T){
+  res = list()
+  for (i in 0:T){
+    t = i/T
+    matry = climat_map_maker(height_map,Tgain,t)
+    res[[i+1]] = matry
+    #res[[i+1]] = t(matry)[ncol(matry):1,]
+  }
+  return(res)
+}
+c_maps = ccmm1(map,Tadd_cyc,N_cycles)
+cc0 = c_maps[[1]]
+data <- expand.grid(X=nr, Y=nc)
+#ggplot(data, aes(X, Y, fill= cc0[nrow(cc0):1,])) + geom_tile() + scale_fill_gradient(low="blue", high="red",limits=Tmarge) + theme_ipsum()
+cc1 = c_maps[[N_cycles]]
+#ggplot(data, aes(X, Y, fill= cc1[,ncol(cc1):1])) + geom_tile() + scale_fill_gradient(low="blue", high="red",limits=Tmarge) + theme_ipsum()
+
+# Suitabilities on the map
+list_suit = list()
+for (t in 0:N_cycles){
+  climat = c_maps[[t+1]]
+  notnull = (Trange_spe[1]<climat)&(Trange_spe[4]>climat)
+  loc1 = (climat-Trange_spe[1]) / (Trange_spe[2]-Trange_spe[1])
+  loc2 = (climat-Trange_spe[4]) / (Trange_spe[3]-Trange_spe[4])
+  suit = pmin(loc1,loc2,1)
+  suit[is.na(suit) | suit<0]=0
+  list_suit[[t+1]] = as(Matrix(suit,sparse=TRUE),"dgCMatrix")
+}
+
+# Plot suitabilities over time
+first_suit = 0*map
+for (t in 0:N_cycles){
+  back_suit = as.matrix(list_suit[[(N_cycles+1)-t]])
+  first_suit[back_suit>0.99]=((N_cycles+1)-(t))
+}
+
+last_suit = 0*map
+for (t in 0:N_cycles){
+  forw_suit = as.matrix(list_suit[[t+1]])
+  last_suit[forw_suit>0.99]=t
+}
+
+R = ((last_suit-first_suit)/N_cycles)[nrow(first_suit):1,]
+G = (first_suit/N_cycles)[nrow(first_suit):1,]
+B = (1 - last_suit/N_cycles)[nrow(first_suit):1,]
+rvb_tensor = array(-1,c(nrow,ncol,3))
+rvb_tensor[,,1]=1*(first_suit==1 & last_suit==N_cycles) # red
+rvb_tensor[,,2]=1*((first_suit!=1 & last_suit==N_cycles)|(first_suit==1 & last_suit!=N_cycles)) # green
+rvb_tensor[,,3]=1*(first_suit==1 & last_suit!=N_cycles) # blue
+#rvb_tensor[,,3]= rvb_tensor[,,3] - 1 * (R==0 & G==0 & B==1)
+rvb_tensor[rvb_tensor==-1 | FALSE]=1
+rvb_tensor[is.na(map)]=1
+rvb_tensor2 = round(rvb_tensor*255)
+raster_RGB = stack(raster(rvb_tensor2[,,1]),raster(rvb_tensor2[,,2]),raster(rvb_tensor2[,,3]))
+plotRGB(flip(raster_RGB))
+
+# Cost
+cost_mapping = function(x,y){
+  return (100+y*50)
+}
+cost_map = function(nrow,ncol,FUN){
+  x = seq(0,1,length=nrow)
+  y = seq(0,1,length=ncol)
+  v = outer(x,y,FUN)
+  return(v)
+}
+cost = (!is.na(map)) * cost_map(nrow,ncol,cost_mapping)
+#ggplot(data, aes(X, Y, fill= cost)) + geom_tile() + scale_fill_gradient(low="blue", high="red",limits=c(100,150)) + theme_ipsum()
+if(class(cost)=="dtCMatrix"){
+  cost = as(as(cost,"dgCMatrix"),"dgCMatrix")
+}else{
+  cost = as(cost,"dgCMatrix")
+}
+cost = as(as(cost,"dgTMatrix"),"dgCMatrix")
+
+# Presence
+suitnow = (first_suit[nrow:1,]==1)*1
+maty <- matrix(runif(ncol*nrow),ncol = ncol)                # Specify number of columns
+maty <- t(t((maty) * seq(0,1,length=nrow)^4) * (seq(0,1,length=nrow)>0.7))
+pres = (suitnow>0.99) * (maty>0.2)
+XY_pres = which(pres==1,arr.ind = T)
+points( (XY_pres[,2]-1/2)/nrow, 1-(XY_pres[,1]-1/2)/ncol, pch=19)
+
+pres[is.na(pres)] = 0
+pres = Matrix(pres, sparse = T)
+
+
+#################################################
+## Choices
+#################################################
+
+AAA1=optgenam3(pres[nrow:1,],
+               list_suit,
+               cost,
+               migr_spe,
+               threshold,
+               confidence,
+               npop,
+               nsur,
+               ngen)
+
+
+choix_ma = AAA1[[1]]
+choix_ma = choix_ma[(choix_ma[,1]!=-1),]
+
+XY_ma = ((AAA1[[1]])[,c(1,2)]-1/2)/nrow
+points(XY_ma[,2], XY_ma[,1],col="white",pch=19)
+
+possibilities = AAA1[[5]]
+possibilities = possibilities +1
+
+XY_ma2 = (possibilities[,c(1,2)]-1/2)/nrow
+#points(XY_ma2[,2], XY_ma2[,1],col="brown",pch=19)
+
+
+colonisation_matrices = AAA1[[2]]
+
+choix_ma_xy = cbind(choix_ma[,1],choix_ma[,2]) 
+indices_choix_ma = matrix(0,length(choix_ma_xy[,1]))
+
+for (i in (1:length(choix_ma_xy[,1]))){
+  h = NA
+  for (j in (1:length(possibilities[,1]))){
+    if ((possibilities[j,1]==(choix_ma_xy[i,1]))&(possibilities[j,2]==(choix_ma_xy[i,2]))){
+      h = possibilities[j,3]
+      break
+    }
+  }
+  if (!is.na(h)){
+    indices_choix_ma[i] = possibilities[h,3]
+  }
+  
+}
+  
+print(indices_choix_ma)
+
+
+
+
+
+indices_pres = matrix(0,length(XY_pres[,1]))
+XY_pres = which(pres==1,arr.ind = T)
+XY_pres = cbind(XY_pres[,1],XY_pres[,2])
+
+#XY_pres = XY_pres[nrow:1,]
+for (i in (1:length(XY_pres[,1]))){
+  h = NA
+  for (j in (1:length(possibilities[,1]))){
+    if ((possibilities[j,1]==(nrow+1-XY_pres[i,1]))&(possibilities[j,2]==(XY_pres[i,2]))){
+      h = possibilities[j,3]
+      break
+    }
+  }
+  if (!is.na(h)){
+    indices_pres[i] = possibilities[h,3]
+  }
+  
+}
+
+print(indices_pres)
+
+
+
+#groa = sparseMatrix(i = (a@i[1:length(a@p)-1]+1), j = a@p[1:length(a@p)-1]+1, x = a@x[1:length(a@p)-1], dims = a@Dim)
+coloni = as.matrix(AAA1[[2]][[1]])[,indices_pres]
+colo2 = 0.99999999 - coloni
+colo3 = round(1-apply(colo2, 1 , prod),2)
+
+
+#####
+##### Afficher la situation SAALEE (si aucune action légitime n'est entreprise)
+#####
+
+rvb_tensor = array(0.5,c(nrow,ncol,3))
+
+for (i in 1:length(c(colo3))){
+  if (colo3[i]!=0){
+    rvb_tensor[possibilities[i,1],possibilities[i,2],1]=1 #R
+    rvb_tensor[possibilities[i,1],possibilities[i,2],2]=0 #G
+    rvb_tensor[possibilities[i,1],possibilities[i,2],3]=0#B    
+  }
+
+}
+
+for (i in 1:length(XY_pres[,1])){
+  rvb_tensor[nrow+1-XY_pres[i,1],XY_pres[i,2],1]=1 #R
+  rvb_tensor[nrow+1-XY_pres[i,1],XY_pres[i,2],2]=1 #G
+  rvb_tensor[nrow+1-XY_pres[i,1],XY_pres[i,2],3]=0 #B
+}
+
+
+
+# for (i in 1:length(XY_pres[,1])){
+#   rvb_tensor[nrow-XY_pres[i,1]+1,XY_pres[i,2],1]=0 #R
+#   rvb_tensor[nrow-XY_pres[i,1]+1,XY_pres[i,2],2]=1 #G
+#   rvb_tensor[nrow-XY_pres[i,1]+1,XY_pres[i,2],3]=0 #B
+# }
+
+
+rvb_tensor[is.na(map)]=1
+rvb_tensor2 = round(rvb_tensor*255)
+raster_RGB = stack(raster(rvb_tensor2[,,1]),raster(rvb_tensor2[,,2]),raster(rvb_tensor2[,,3]))
+plotRGB(flip(raster_RGB))
+
+
+
+
+
+
+
+
+
+
+#####
+##### Afficher les endroits où on plante
+#####
+rvb_tensor3 = array(0.5,c(nrow,ncol,3))
+
+for (i in 1:length(choix_ma[,1])){
+  
+  loc_colo = as.matrix(colonisation_matrices[[choix_ma[i,3]]])
+  ind=indices_choix_ma[i]
+  vect_colo = loc_colo[,ind]
+  
+  for (j in 1:length(vect_colo)){
+    rvb_tensor3[possibilities[j,1],possibilities[j,2],1]=vect_colo[j]+rvb_tensor3[possibilities[j,1],possibilities[j,2],1]-rvb_tensor3[possibilities[j,1],possibilities[j,2],1]*vect_colo[j] #R
+    rvb_tensor3[possibilities[j,1],possibilities[j,2],2]=1 #G
+    #rvb_tensor3[possibilities[j,1],possibilities[j,2],3]=0 #B
+  }
+  
+  
+  #rvb_tensor3[possibilities[ind,1],possibilities[ind,2],1]=loc #R
+}
+# for (i in 1:length(choix_ma[,1])){
+#   rvb_tensor3[choix_ma[i,1],choix_ma[i,2],1]=1 #R
+#   rvb_tensor3[choix_ma[i,1],choix_ma[i,2],2]=0 #G
+#   rvb_tensor3[choix_ma[i,1],choix_ma[i,2],3]=0 #B
+# }
+
+rvb_tensor3[is.na(map)]=1
+rvb_tensor2 = round(rvb_tensor3*255)
+raster_RGB = stack(raster(rvb_tensor2[,,1]),raster(rvb_tensor2[,,2]),raster(rvb_tensor2[,,3]))
+plotRGB(flip(raster_RGB))
+
+points(XY_ma[,2], XY_ma[,1],col="red",pch=19)
+
+  
+
+
