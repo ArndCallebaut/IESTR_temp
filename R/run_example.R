@@ -21,12 +21,18 @@ library(dplyr)
 library(purrr)
 library(Matrix)
 library("viridis")
+
+#ISSUE: LIBRARY optAM not found
 library("optAM")
+
 library(hrbrthemes)
 library(grid)
 library(raster)
+install.packages('wesanderson')
+
 source("R/building_example_functions.R")
 source("R/plot_exemple_functions.R")
+
 ### Global Details
 col = c('green3','green2','blue1','blue3')
 col = terrain.colors(20)
@@ -92,11 +98,16 @@ lim2 = c(xmin,xmax,ymin,ymax)
 # Common for all the figures
 height_map = height_map(nrow,ncol)
 climate_maps = climat_maps_maker(height_map,Tadd_cyc,N_cycles)
-suitability_maps = suitability_maps(climate_maps,Trange_spe)
-presence_1st_area = presence_map(nrow,ncol,list_suit,height_map,lim1,nb_cell_occuped1)
-presence_2nd_area = presence_map(nrow,ncol,list_suit,height_map,lim2,nb_cell_occuped2)
-presence_map = presence_1st_area + presence_2nd_area
+suitability_maps = make_suitability_maps(climate_maps,Trange_spe) 
 
+# Pep added : object list_suit was missing , I assumed it was a list of the suitability maps, I added suitability_maps 
+list_suit = suitability_maps
+presence_1st_area = make_presence_map(nrow,ncol,list_suit,height_map,lim1,nb_cell_occuped1)
+presence_2nd_area = make_presence_map(nrow,ncol,list_suit,height_map,lim2,nb_cell_occuped2)
+
+#Pep added: it is bad practice to name an object the same way you name a function, at least in R.
+#   changed the name of the function to make_presence_map
+presence_map = presence_1st_area + presence_2nd_area
 presence_map[is.na(presence_map)] = 0
 presence_map = Matrix(presence_map, sparse = T)
 presence_map = as(presence_map,"dgCMatrix")
@@ -115,7 +126,7 @@ do_plot_fig3(nr, nc, cost1,cost2, cost3)
 #################################################
 ## Results
 #################################################
-
+source("R/RcppExports.R")
 gss = rcpp_global_suitable_sites(suitability_maps)
 gsc = rcpp_global_suitable_coordinates(gss)
 ltm = rcpp_local_transition_matrix(gss,gsc,migr_spe)

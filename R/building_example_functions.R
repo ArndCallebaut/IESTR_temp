@@ -51,11 +51,27 @@ climat_maps_maker = function(height_map,Tgain,T){
 ### Function for suitabilities on the map, at each time stap
 ###
 
-suitability_maps = function(climate_maps,Trange_spe){
+# OLD VERSION
+# suitability_maps = function(climate_maps,Trange_spe){
+#   # Suitability on the map, at each time step
+#   list_suit = list()
+#   for (t in 0:N_cycles){
+#     climat = c_maps[[t+1]]
+#     notnull = (Trange_spe[1]<climat)&(Trange_spe[4]>climat)
+#     loc1 = (climat-Trange_spe[1]) / (Trange_spe[2]-Trange_spe[1])
+#     loc2 = (climat-Trange_spe[4]) / (Trange_spe[3]-Trange_spe[4])
+#     suit = pmin(loc1,loc2,1)
+#     suit[is.na(suit) | suit<0]=0
+#     list_suit[[t+1]] = as(Matrix(suit,sparse=TRUE),"dgCMatrix")
+#   }
+#   return(list_suit)
+# }
+
+make_suitability_maps = function(climate_maps,Trange_spe){
   # Suitability on the map, at each time step
   list_suit = list()
   for (t in 0:N_cycles){
-    climat = c_maps[[t+1]]
+    climat = climate_maps[[t+1]]
     notnull = (Trange_spe[1]<climat)&(Trange_spe[4]>climat)
     loc1 = (climat-Trange_spe[1]) / (Trange_spe[2]-Trange_spe[1])
     loc2 = (climat-Trange_spe[4]) / (Trange_spe[3]-Trange_spe[4])
@@ -85,7 +101,7 @@ cost_map = function(nrow,ncol,map,FUN=cost_mapping){
   v = outer(x,y,FUN)
   cost = (!is.na(map)) * v
   cost[is.na(map)] = NA
-  if(class(cost)=="dtCMatrix"){cost = as(as(cost,"dgCMatrix"),"dgCMatrix")}
+  if(any (class(cost) %in%"dtCMatrix")){cost = as(as(cost,"dgCMatrix"),"dgCMatrix")}
   else{cost = as(cost,"dgCMatrix")}
   cost = as(as(cost,"dgTMatrix"),"dgCMatrix")
   return(cost)
@@ -95,7 +111,7 @@ cost_map_modified = function(nrow,ncol,map,FUN=cost_mapping){
   y = seq(0,1,length=ncol)
   v = outer(x,y,FUN) + map*400
   cost = (!is.na(map)) * v
-  if(class(cost)=="dtCMatrix"){cost = as(as(cost,"dgCMatrix"),"dgCMatrix")}
+  if(any (class(cost) %in% "dtCMatrix")) {cost = as(as(cost,"dgCMatrix"),"dgCMatrix")}
   else{cost = as(cost,"dgCMatrix")}
   cost = as(as(cost,"dgTMatrix"),"dgCMatrix")
   return(cost)
@@ -105,7 +121,7 @@ cost_map_modified = function(nrow,ncol,map,FUN=cost_mapping){
 ### Function for presence on the map
 ###
 
-presence_map = function(nrow,ncol,suit_maps,height_map,xylim,nb_cell){
+make_presence_map = function(nrow,ncol,suit_maps,height_map,xylim,nb_cell){
   suitnow = (suit_maps[[1]][nrow:1,]==1)*1
   maty <- (matrix(runif(ncol*nrow),ncol = ncol))                # Specify number of columns
   Xmin = round(xylim[1] * ncol)
@@ -136,6 +152,38 @@ presence_map = function(nrow,ncol,suit_maps,height_map,xylim,nb_cell){
   pres[coord_presence] = 1
   return(pres)
 }
+
+# presence_map = function(nrow,ncol,suit_maps,height_map,xylim,nb_cell){
+#   suitnow = (suit_maps[[1]][nrow:1,]==1)*1
+#   maty <- (matrix(runif(ncol*nrow),ncol = ncol))                # Specify number of columns
+#   Xmin = round(xylim[1] * ncol)
+#   Xmax = round(xylim[2] * ncol)
+#   Ymin = round(xylim[3] * nrow)
+#   Ymax = round(xylim[4] * nrow)
+#   mat <- (matrix(rep(0,ncol*nrow),ncol = ncol)) 
+#   mat[Xmin:Xmax,Ymin:Ymax]=1
+#   mat[1:Xmin,]=0
+#   mat[Xmax:ncol,]=0
+#   mat[,1:Ymin]=0
+#   mat[,Ymax:nrow]=0
+#   
+#   viable_coord = which((mat*(0<height_map))==1,arr.ind=TRUE)
+#   
+#   nb_possible = length(viable_coord[,1])
+#   if(nb_possible<nb_cell){
+#     message("ERROR : too much cells asked. ")
+#     pres = mat * 0
+#     pres[is.na(height_map)] = NA
+#     pres[viable_coord] = 1
+#     return(pres)
+#   }
+#   indices_presence = sample(nb_possible, nb_cell)
+#   coord_presence = viable_coord[indices_presence,]
+#   pres = mat * 0
+#   pres[is.na(height_map)] = NA
+#   pres[coord_presence] = 1
+#   return(pres)
+# }
 
 ### ### ###
 ### Function for presence on the map
